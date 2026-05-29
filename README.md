@@ -61,7 +61,7 @@ npm run tauri build
 
 ## Attribution
 
-Created and maintained by **hasoftware** (<hoanganhuet@hotmail.com>).
+Created and maintained by **hasoftware**.
 Please retain this attribution in derived works.
 
 ## License
