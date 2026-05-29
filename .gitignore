@@ -1,0 +1,25 @@
+# Rust / Cargo
+/target
+**/target
+
+# Node / frontend
+node_modules
+/dist
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Claude Code runtime artifacts
+.claude/scheduled_tasks.lock
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea
+.vscode/*
+!.vscode/extensions.json
+
+# GeoIP databases (downloaded by the user; not redistributed)
+*.mmdb

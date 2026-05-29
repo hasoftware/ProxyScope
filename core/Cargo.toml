@@ -1,0 +1,11 @@
+[package]
+name = "proxyscope-core"
+description = "UI-agnostic proxy parsing, protocol detection, and checking for ProxyScope"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde = { workspace = true }
