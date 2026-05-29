@@ -4,7 +4,7 @@
 //! frontend through Tauri commands and (in later phases) streams per-proxy
 //! results back via Tauri events. No proxy logic should live here.
 
-use proxyscope_core::{DetectConfig, Protocol, ProxyEndpoint};
+use proxyscope_core::{CheckConfig, DetectConfig, GeoIp, Protocol, ProxyEndpoint, ProxyReport};
 use serde::Serialize;
 
 /// One row returned by [`parse_proxies`]: either a parsed endpoint or the
@@ -110,6 +110,21 @@ async fn detect_proxies(text: String) -> Vec<DetectRow> {
     rows
 }
 
+/// Parses a proxy list, auto-detects protocols, and runs the full quality
+/// checks for each valid proxy, returning one report per proxy.
+///
+/// Uses default settings for now (GeoLite2 path, judge URL, concurrency, and
+/// timeouts become user-configurable in Phase 5). TODO (Phase 4): stream
+/// reports to the UI via Tauri events instead of returning the whole batch.
+#[tauri::command]
+async fn check_proxies(text: String) -> Vec<ProxyReport> {
+    let config = CheckConfig::default();
+    // No offline database yet (Phase 5 adds the path setting); allow the HTTP
+    // GeoIP fallback so country/region still populate.
+    let geoip = GeoIp::new(None, true);
+    proxyscope_core::check_list(&text, config, geoip, 64, 64).await
+}
+
 /// Builds and runs the ProxyScope desktop application.
 ///
 /// # Panics
@@ -119,7 +134,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_version,
             parse_proxies,
-            detect_proxies
+            detect_proxies,
+            check_proxies
         ])
         .run(tauri::generate_context!())
         .expect("error while running the ProxyScope application");
