@@ -5,6 +5,8 @@ import { listen } from "@tauri-apps/api/event";
 interface ScanRow {
   index: number;
   proxy: string;
+  username: string | null;
+  password: string | null;
   protocol: string | null;
   alive: boolean;
   exit_ip: string | null;
@@ -66,7 +68,11 @@ const state = {
   statusFilter: "all" as "all" | "alive" | "dead",
   sortKey: "proxy" as ColumnKey,
   sortDir: "asc" as "asc" | "desc",
+  selected: new Set<number>(),
 };
+
+/** Proxy export/copy formats, keyed by the `<select id="proxy-format">` value. */
+type ProxyFormat = "hostport" | "hostportauth" | "scheme" | "authhost";
 
 function $<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -178,25 +184,14 @@ function visibleRows(): ScanRow[] {
   return rows;
 }
 
-function renderHead(): void {
-  const head = $("head-row");
-  head.innerHTML = COLUMNS.map((col) => {
+function headHtml(): string {
+  const selectTh = `<th class="col-select"><input type="checkbox" id="select-all" title="Select all (filtered)" /></th>`;
+  const cols = COLUMNS.map((col) => {
     const active = col.key === state.sortKey;
     const arrow = active ? (state.sortDir === "asc" ? " ▲" : " ▼") : "";
     return `<th data-key="${col.key}" class="${active ? "sorted" : ""}">${esc(col.label)}${arrow}</th>`;
   }).join("");
-  head.querySelectorAll("th").forEach((th) => {
-    th.addEventListener("click", () => {
-      const key = th.getAttribute("data-key") as ColumnKey;
-      if (state.sortKey === key) {
-        state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
-      } else {
-        state.sortKey = key;
-        state.sortDir = "asc";
-      }
-      render();
-    });
-  });
+  return selectTh + cols;
 }
 
 function rowHtml(row: ScanRow): string {
@@ -211,8 +206,10 @@ function rowHtml(row: ScanRow): string {
     row.rotation && row.rotation !== "unknown"
       ? `${esc(row.rotation)}${row.observed_ips > 1 ? ` (${row.observed_ips})` : ""}`
       : "—";
+  const checked = state.selected.has(row.index) ? "checked" : "";
 
   return `<tr class="${row.alive ? "" : "row--dead"}">
+    <td class="col-select"><input type="checkbox" class="row-select" data-index="${row.index}" ${checked} /></td>
     <td class="mono">${esc(row.proxy)}</td>
     <td>${esc(row.protocol ?? "—")}</td>
     <td>${status}</td>
@@ -231,12 +228,113 @@ function render(): void {
   requestAnimationFrame(() => {
     renderQueued = false;
     const rows = visibleRows();
+    $("head-row").innerHTML = headHtml();
     $("rows").innerHTML = rows.map(rowHtml).join("");
     $("empty").hidden = state.rows.size > 0;
 
+    // Reflect selection state on the header "select all" checkbox.
+    const selectedVisible = rows.filter((r) => state.selected.has(r.index)).length;
+    const selectAll = document.getElementById("select-all") as HTMLInputElement | null;
+    if (selectAll) {
+      selectAll.checked = rows.length > 0 && selectedVisible === rows.length;
+      selectAll.indeterminate = selectedVisible > 0 && selectedVisible < rows.length;
+    }
+
     const alive = [...state.rows.values()].filter((r) => r.alive).length;
     $("counts").textContent = `${rows.length} shown · ${alive} alive · ${state.rows.size} total`;
+    $("select-info").textContent = state.selected.size > 0 ? `${state.selected.size} selected` : "";
   });
+}
+
+function selectedRows(): ScanRow[] {
+  return [...state.rows.values()]
+    .filter((row) => state.selected.has(row.index))
+    .sort((a, b) => a.index - b.index);
+}
+
+function aliveRows(): ScanRow[] {
+  return [...state.rows.values()]
+    .filter((row) => row.alive)
+    .sort((a, b) => a.index - b.index);
+}
+
+/** Renders one proxy in the chosen export format. */
+function formatProxy(row: ScanRow, format: ProxyFormat): string {
+  const auth = row.username ? `${row.username}:${row.password ?? ""}` : "";
+  switch (format) {
+    case "hostportauth":
+      return auth ? `${row.proxy}:${auth}` : row.proxy;
+    case "scheme": {
+      const scheme = row.protocol && row.protocol !== "mtproxy" ? row.protocol : "http";
+      return auth ? `${scheme}://${auth}@${row.proxy}` : `${scheme}://${row.proxy}`;
+    }
+    case "authhost":
+      return auth ? `${auth}@${row.proxy}` : row.proxy;
+    case "hostport":
+    default:
+      return row.proxy;
+  }
+}
+
+function formatList(rows: ScanRow[], format: ProxyFormat): string {
+  return rows.map((row) => formatProxy(row, format)).join("\n");
+}
+
+function currentFormat(): ProxyFormat {
+  return $<HTMLSelectElement>("proxy-format").value as ProxyFormat;
+}
+
+/** Copies text to the clipboard, falling back to a hidden textarea. */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+async function copySelected(): Promise<void> {
+  const rows = selectedRows();
+  if (rows.length === 0) {
+    $("status").textContent = "No proxies selected.";
+    return;
+  }
+  const ok = await copyText(formatList(rows, currentFormat()));
+  $("status").textContent = ok
+    ? `Copied ${rows.length} prox${rows.length === 1 ? "y" : "ies"} to clipboard.`
+    : "Copy failed — clipboard unavailable.";
+}
+
+function exportSelected(): void {
+  const rows = selectedRows();
+  if (rows.length === 0) {
+    $("status").textContent = "No proxies selected.";
+    return;
+  }
+  download("proxyscope-selected.txt", "text/plain", formatList(rows, currentFormat()));
+}
+
+function exportAlive(): void {
+  const rows = aliveRows();
+  if (rows.length === 0) {
+    $("status").textContent = "No alive proxies to export.";
+    return;
+  }
+  download("proxyscope-alive.txt", "text/plain", formatList(rows, currentFormat()));
 }
 
 function setProgress(done: number, total: number): void {
@@ -262,6 +360,7 @@ async function startScan(): Promise<void> {
   }
 
   state.rows.clear();
+  state.selected.clear();
   state.done = 0;
   state.scanning = true;
   render();
@@ -300,6 +399,8 @@ function download(filename: string, mime: string, content: string): void {
 function exportCsv(): void {
   const header = [
     "proxy",
+    "username",
+    "password",
     "protocol",
     "alive",
     "exit_ip",
@@ -322,6 +423,8 @@ function exportCsv(): void {
     lines.push(
       [
         row.proxy,
+        row.username,
+        row.password,
         row.protocol,
         row.alive,
         row.exit_ip,
@@ -389,6 +492,9 @@ function wireControls(): void {
   $("start").addEventListener("click", () => void startScan());
   $("export-csv").addEventListener("click", exportCsv);
   $("export-json").addEventListener("click", exportJson);
+  $("copy-selected").addEventListener("click", () => void copySelected());
+  $("export-selected").addEventListener("click", exportSelected);
+  $("export-alive").addEventListener("click", exportAlive);
 
   $<HTMLInputElement>("filter").addEventListener("input", (e) => {
     state.filterText = (e.target as HTMLInputElement).value;
@@ -396,6 +502,39 @@ function wireControls(): void {
   });
   $<HTMLSelectElement>("status-filter").addEventListener("change", (e) => {
     state.statusFilter = (e.target as HTMLSelectElement).value as typeof state.statusFilter;
+    render();
+  });
+
+  // Header is rebuilt on every render, so use delegation for sort + select-all.
+  $("head-row").addEventListener("click", (e) => {
+    const th = (e.target as HTMLElement).closest("th[data-key]");
+    if (!th) return;
+    const key = th.getAttribute("data-key") as ColumnKey;
+    if (state.sortKey === key) {
+      state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+    } else {
+      state.sortKey = key;
+      state.sortDir = "asc";
+    }
+    render();
+  });
+  $("head-row").addEventListener("change", (e) => {
+    const target = e.target as HTMLInputElement;
+    if (target.id !== "select-all") return;
+    for (const row of visibleRows()) {
+      if (target.checked) state.selected.add(row.index);
+      else state.selected.delete(row.index);
+    }
+    render();
+  });
+
+  // Row checkboxes are recreated on every render — delegate from the tbody.
+  $("rows").addEventListener("change", (e) => {
+    const target = e.target as HTMLInputElement;
+    if (!target.classList.contains("row-select")) return;
+    const index = Number(target.dataset.index);
+    if (target.checked) state.selected.add(index);
+    else state.selected.delete(index);
     render();
   });
 
@@ -409,7 +548,6 @@ function wireControls(): void {
 
 window.addEventListener("DOMContentLoaded", () => {
   loadSettings();
-  renderHead();
   wireControls();
   render();
   void showCoreVersion();

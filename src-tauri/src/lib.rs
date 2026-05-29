@@ -237,7 +237,14 @@ impl ScanRequest {
 #[derive(Debug, Clone, Serialize)]
 struct ScanRow {
     index: usize,
+    /// `host:port` of the proxy itself.
     proxy: String,
+    /// Credentials carried by the input, so the UI can rebuild authenticated
+    /// export formats (e.g. `host:port:user:pass`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    password: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     protocol: Option<Protocol>,
     alive: bool,
@@ -266,9 +273,12 @@ impl From<ScanResult> for ScanRow {
     fn from(result: ScanResult) -> Self {
         let report = result.report;
         let geo = report.geo;
+        let proxy = report.endpoint.address();
         Self {
             index: result.index,
-            proxy: report.endpoint.address(),
+            proxy,
+            username: report.endpoint.username,
+            password: report.endpoint.password,
             protocol: report.protocol,
             alive: report.alive,
             exit_ip: report.exit_ip,

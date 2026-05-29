@@ -249,6 +249,24 @@ body {
   color: var(--accent);
 }
 
+.col-select {
+  width: 1%;
+  text-align: center;
+  cursor: default;
+}
+
+.col-select input {
+  cursor: pointer;
+}
+
+.toolbar--export select {
+  background: #1b1b1f;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.3rem 0.4rem;
+}
+
 .results tbody td {
   padding: 0.42rem 0.65rem;
   border-bottom: 1px solid #2d2d33;

@@ -87,6 +87,22 @@
           <button id="export-json" class="btn" type="button">Export JSON</button>
         </div>
 
+        <div class="toolbar toolbar--export">
+          <label class="opt">
+            Format
+            <select id="proxy-format">
+              <option value="hostport">host:port</option>
+              <option value="hostportauth">host:port:user:pass</option>
+              <option value="scheme">scheme://user:pass@host:port</option>
+              <option value="authhost">user:pass@host:port</option>
+            </select>
+          </label>
+          <button id="copy-selected" class="btn" type="button">Copy selected</button>
+          <button id="export-selected" class="btn" type="button">Export selected</button>
+          <button id="export-alive" class="btn" type="button">Export alive</button>
+          <span id="select-info" class="counts"></span>
+        </div>
+
         <div class="table-wrap">
           <table class="results">
             <thead>
