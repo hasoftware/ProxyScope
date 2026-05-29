@@ -9,3 +9,5 @@ publish = false
 
 [dependencies]
 serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
