@@ -213,6 +213,22 @@ pub async fn check_many(
     results.into_iter().flatten().collect()
 }
 
+/// Fetches just the exit IP for one request through the proxy.
+///
+/// Returns `None` unless the judge responded `2xx` through the proxy with a
+/// recognizable IP. Used by rotation detection, which repeats this call.
+pub async fn fetch_exit_ip(
+    endpoint: &ProxyEndpoint,
+    protocol: Protocol,
+    config: &CheckConfig,
+) -> Option<String> {
+    let probe = run_check(endpoint, protocol, config).await.ok()?;
+    if !(200..300).contains(&probe.status) {
+        return None;
+    }
+    extract_exit_ip(&probe.body)
+}
+
 /// Detects our own public IP by querying the judge directly (no proxy).
 pub async fn detect_local_ip(judge_url: &str, http: &reqwest::Client) -> Option<String> {
     let body = http.get(judge_url).send().await.ok()?.text().await.ok()?;

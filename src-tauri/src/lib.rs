@@ -4,7 +4,10 @@
 //! frontend through Tauri commands and (in later phases) streams per-proxy
 //! results back via Tauri events. No proxy logic should live here.
 
-use proxyscope_core::{CheckConfig, DetectConfig, GeoIp, Protocol, ProxyEndpoint, ProxyReport};
+use proxyscope_core::{
+    CheckConfig, DetectConfig, GeoIp, Protocol, ProxyEndpoint, ProxyReport, RotationConfig,
+    RotationKind,
+};
 use serde::Serialize;
 
 /// One row returned by [`parse_proxies`]: either a parsed endpoint or the
@@ -125,6 +128,42 @@ async fn check_proxies(text: String) -> Vec<ProxyReport> {
     proxyscope_core::check_list(&text, config, geoip, 64, 64).await
 }
 
+/// One row returned by [`check_rotation`].
+#[derive(Serialize)]
+struct RotationRow {
+    endpoint: ProxyEndpoint,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    protocol: Option<Protocol>,
+    kind: RotationKind,
+    observed_ips: Vec<String>,
+    samples: usize,
+}
+
+/// Parses a proxy list, detects protocols, and probes each proxy's rotation
+/// behavior by sending several sequential requests and recording exit IPs.
+///
+/// `samples` overrides the burst size (default 4). Time-based probing is left
+/// off here because it requires waiting; Phase 5 will expose it as a setting.
+#[tauri::command]
+async fn check_rotation(text: String, samples: Option<usize>) -> Vec<RotationRow> {
+    let mut rotation = RotationConfig::default();
+    if let Some(samples) = samples {
+        rotation.samples = samples.clamp(1, 50);
+    }
+
+    proxyscope_core::rotation_list(&text, CheckConfig::default(), rotation, 64, 32)
+        .await
+        .into_iter()
+        .map(|outcome| RotationRow {
+            endpoint: outcome.endpoint,
+            protocol: outcome.protocol,
+            kind: outcome.report.kind,
+            observed_ips: outcome.report.observed_ips,
+            samples: outcome.report.samples,
+        })
+        .collect()
+}
+
 /// Builds and runs the ProxyScope desktop application.
 ///
 /// # Panics
@@ -135,7 +174,8 @@ pub fn run() {
             app_version,
             parse_proxies,
             detect_proxies,
-            check_proxies
+            check_proxies,
+            check_rotation
         ])
         .run(tauri::generate_context!())
         .expect("error while running the ProxyScope application");
