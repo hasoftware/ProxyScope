@@ -11,6 +11,7 @@ pub mod geoip;
 pub mod parse;
 pub mod proxy;
 pub mod rotation;
+pub mod scan;
 
 pub use check::{
     check_many, check_proxy, detect_local_ip, fetch_exit_ip, Anonymity, CheckConfig, CheckContext,
@@ -23,6 +24,7 @@ pub use proxy::{ParseError, Protocol, ProxyEndpoint};
 pub use rotation::{
     detect_rotation, detect_rotation_many, RotationConfig, RotationKind, RotationReport,
 };
+pub use scan::{scan_endpoints, ScanOptions, ScanResult};
 
 use std::sync::Arc;
 

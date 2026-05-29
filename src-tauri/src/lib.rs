@@ -4,11 +4,15 @@
 //! frontend through Tauri commands and (in later phases) streams per-proxy
 //! results back via Tauri events. No proxy logic should live here.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
 use proxyscope_core::{
-    CheckConfig, DetectConfig, GeoIp, Protocol, ProxyEndpoint, ProxyReport, RotationConfig,
-    RotationKind,
+    Anonymity, CheckConfig, DetectConfig, GeoIp, Protocol, ProxyEndpoint, ProxyReport,
+    RotationConfig, RotationKind, ScanOptions, ScanResult,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter};
 
 /// One row returned by [`parse_proxies`]: either a parsed endpoint or the
 /// reason the input line could not be parsed.
@@ -164,6 +168,155 @@ async fn check_rotation(text: String, samples: Option<usize>) -> Vec<RotationRow
         .collect()
 }
 
+/// Options the frontend may pass to [`start_scan`].
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct ScanRequest {
+    check_rotation: bool,
+    rotation_samples: Option<usize>,
+}
+
+/// A flat, table-ready row emitted for each proxy during a scan.
+#[derive(Debug, Clone, Serialize)]
+struct ScanRow {
+    index: usize,
+    proxy: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    protocol: Option<Protocol>,
+    alive: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_ip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    country_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    country_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    connect_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rtt_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    anonymity: Option<Anonymity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rotation: Option<RotationKind>,
+    observed_ips: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+impl From<ScanResult> for ScanRow {
+    fn from(result: ScanResult) -> Self {
+        let report = result.report;
+        let geo = report.geo;
+        Self {
+            index: result.index,
+            proxy: report.endpoint.address(),
+            protocol: report.protocol,
+            alive: report.alive,
+            exit_ip: report.exit_ip,
+            country_code: geo.as_ref().and_then(|g| g.country_code.clone()),
+            country_name: geo.as_ref().and_then(|g| g.country_name.clone()),
+            region: geo.as_ref().and_then(|g| g.region.clone()),
+            connect_ms: report.connect_ms,
+            rtt_ms: report.rtt_ms,
+            anonymity: report.anonymity,
+            rotation: result.rotation.as_ref().map(|r| r.kind),
+            observed_ips: result
+                .rotation
+                .as_ref()
+                .map(|r| r.observed_ips.len())
+                .unwrap_or(0),
+            error: report.error,
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+struct StartedPayload {
+    total: usize,
+    skipped: usize,
+}
+
+#[derive(Clone, Serialize)]
+struct ProgressPayload {
+    done: usize,
+    total: usize,
+}
+
+#[derive(Clone, Serialize)]
+struct FinishedPayload {
+    total: usize,
+}
+
+/// Starts a scan and streams results to the UI via Tauri events.
+///
+/// Emits `scan-started` (with totals), then a `scan-result` and `scan-progress`
+/// event per proxy as each finishes, and finally `scan-finished`. Returns the
+/// number of proxies that will be scanned so the caller can size its progress
+/// bar; the actual work runs in the background and does not block the UI.
+#[tauri::command]
+async fn start_scan(app: AppHandle, text: String, options: ScanRequest) -> usize {
+    let mut endpoints: Vec<ProxyEndpoint> = Vec::new();
+    let mut skipped = 0usize;
+    for parsed in proxyscope_core::parse_proxies(&text) {
+        match parsed.result {
+            Ok(endpoint) => endpoints.push(endpoint),
+            Err(_) => skipped += 1,
+        }
+    }
+
+    let total = endpoints.len();
+    let _ = app.emit("scan-started", StartedPayload { total, skipped });
+    if total == 0 {
+        let _ = app.emit("scan-finished", FinishedPayload { total: 0 });
+        return 0;
+    }
+
+    let mut rotation = RotationConfig::default();
+    if let Some(samples) = options.rotation_samples {
+        rotation.samples = samples.clamp(1, 50);
+    }
+    let scan_options = ScanOptions {
+        check_rotation: options.check_rotation,
+        rotation,
+        ..ScanOptions::default()
+    };
+
+    // Run the scan in the background so the command returns immediately. Each
+    // completed proxy emits its row plus a progress tick; the last one closes
+    // the run with `scan-finished`.
+    tauri::async_runtime::spawn(async move {
+        let done = Arc::new(AtomicUsize::new(0));
+        let emitter = app.clone();
+        proxyscope_core::scan_endpoints(
+            endpoints,
+            CheckConfig::default(),
+            // No offline GeoLite2 database yet (Phase 5 adds the path setting);
+            // allow the HTTP fallback so country/region still populate.
+            GeoIp::new(None, true),
+            scan_options,
+            move |result| {
+                let _ = emitter.emit("scan-result", ScanRow::from(result));
+                let completed = done.fetch_add(1, Ordering::SeqCst) + 1;
+                let _ = emitter.emit(
+                    "scan-progress",
+                    ProgressPayload {
+                        done: completed,
+                        total,
+                    },
+                );
+                if completed == total {
+                    let _ = emitter.emit("scan-finished", FinishedPayload { total });
+                }
+            },
+        )
+        .await;
+    });
+
+    total
+}
+
 /// Builds and runs the ProxyScope desktop application.
 ///
 /// # Panics
@@ -175,7 +328,8 @@ pub fn run() {
             parse_proxies,
             detect_proxies,
             check_proxies,
-            check_rotation
+            check_rotation,
+            start_scan
         ])
         .run(tauri::generate_context!())
         .expect("error while running the ProxyScope application");
