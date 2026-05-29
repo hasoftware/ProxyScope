@@ -128,6 +128,53 @@ body {
   font-size: 0.85rem;
 }
 
+.settings {
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+}
+
+.settings > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+  user-select: none;
+}
+
+.settings__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+
+.settings__grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.settings__grid label.opt {
+  flex-direction: row;
+  align-items: center;
+}
+
+.settings__grid input[type="text"],
+.settings__grid input[type="number"] {
+  background: #1b1b1f;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.35rem 0.45rem;
+  font-size: 13px;
+}
+
+.settings__wide {
+  grid-column: 1 / -1;
+}
+
 .progress {
   margin-top: 0.6rem;
   height: 6px;

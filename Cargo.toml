@@ -9,7 +9,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["hasoftware <hoanganhuet@hotmail.com>"]
 repository = "https://github.com/hasoftware/ProxyScope"
-# License is intentionally left unset until the author confirms the model.
+license = "Apache-2.0"
 publish = false
 
 [workspace.dependencies]

@@ -4,8 +4,10 @@
 //! frontend through Tauri commands and (in later phases) streams per-proxy
 //! results back via Tauri events. No proxy logic should live here.
 
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use proxyscope_core::{
     Anonymity, CheckConfig, DetectConfig, GeoIp, Protocol, ProxyEndpoint, ProxyReport,
@@ -168,12 +170,67 @@ async fn check_rotation(text: String, samples: Option<usize>) -> Vec<RotationRow
         .collect()
 }
 
-/// Options the frontend may pass to [`start_scan`].
+/// Options the frontend may pass to [`start_scan`]. Every field is optional;
+/// missing values fall back to the core defaults.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct ScanRequest {
     check_rotation: bool,
     rotation_samples: Option<usize>,
+    /// Plain-HTTP judge URL that echoes the requester IP and headers.
+    judge_url: Option<String>,
+    connect_timeout_secs: Option<u64>,
+    request_timeout_secs: Option<u64>,
+    /// Maximum number of proxies checked concurrently.
+    concurrency: Option<usize>,
+    /// Path to a GeoLite2 `.mmdb` file for offline country/region lookup.
+    geolite_path: Option<String>,
+    /// Whether to allow the ip-api.com HTTP fallback when offline lookup misses.
+    allow_http_geoip: Option<bool>,
+}
+
+impl ScanRequest {
+    /// Builds the core check configuration from the request, clamping values to
+    /// sane ranges.
+    fn check_config(&self) -> CheckConfig {
+        let mut config = CheckConfig::default();
+        if let Some(url) = self.judge_url.as_deref() {
+            if !url.trim().is_empty() {
+                config.judge_url = url.trim().to_string();
+            }
+        }
+        if let Some(secs) = self.connect_timeout_secs {
+            config.connect_timeout = Duration::from_secs(secs.clamp(1, 120));
+        }
+        if let Some(secs) = self.request_timeout_secs {
+            config.request_timeout = Duration::from_secs(secs.clamp(1, 120));
+        }
+        config
+    }
+
+    /// Opens the GeoIP resolver described by the request.
+    fn geoip(&self) -> GeoIp {
+        let path = self
+            .geolite_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty());
+        GeoIp::new(path.map(Path::new), self.allow_http_geoip.unwrap_or(true))
+    }
+
+    /// Builds the scan options (concurrency + rotation) from the request.
+    fn scan_options(&self) -> ScanOptions {
+        let mut rotation = RotationConfig::default();
+        if let Some(samples) = self.rotation_samples {
+            rotation.samples = samples.clamp(2, 50);
+        }
+        ScanOptions {
+            check_rotation: self.check_rotation,
+            rotation,
+            concurrency: self.concurrency.map(|c| c.clamp(1, 1024)).unwrap_or(64),
+            ..ScanOptions::default()
+        }
+    }
 }
 
 /// A flat, table-ready row emitted for each proxy during a scan.
@@ -273,15 +330,9 @@ async fn start_scan(app: AppHandle, text: String, options: ScanRequest) -> usize
         return 0;
     }
 
-    let mut rotation = RotationConfig::default();
-    if let Some(samples) = options.rotation_samples {
-        rotation.samples = samples.clamp(1, 50);
-    }
-    let scan_options = ScanOptions {
-        check_rotation: options.check_rotation,
-        rotation,
-        ..ScanOptions::default()
-    };
+    let check_config = options.check_config();
+    let geoip = options.geoip();
+    let scan_options = options.scan_options();
 
     // Run the scan in the background so the command returns immediately. Each
     // completed proxy emits its row plus a progress tick; the last one closes
@@ -291,10 +342,8 @@ async fn start_scan(app: AppHandle, text: String, options: ScanRequest) -> usize
         let emitter = app.clone();
         proxyscope_core::scan_endpoints(
             endpoints,
-            CheckConfig::default(),
-            // No offline GeoLite2 database yet (Phase 5 adds the path setting);
-            // allow the HTTP fallback so country/region still populate.
-            GeoIp::new(None, true),
+            check_config,
+            geoip,
             scan_options,
             move |result| {
                 let _ = emitter.emit("scan-result", ScanRow::from(result));

@@ -38,6 +38,36 @@
           <span id="status" class="status"></span>
         </div>
 
+        <details class="settings">
+          <summary>Settings</summary>
+          <div class="settings__grid">
+            <label>
+              Judge URL
+              <input id="set-judge" type="text" placeholder="http://httpbin.org/get" />
+            </label>
+            <label>
+              Concurrency
+              <input id="set-concurrency" type="number" min="1" max="1024" value="64" />
+            </label>
+            <label>
+              Connect timeout (s)
+              <input id="set-connect" type="number" min="1" max="120" value="10" />
+            </label>
+            <label>
+              Request timeout (s)
+              <input id="set-request" type="number" min="1" max="120" value="15" />
+            </label>
+            <label class="settings__wide">
+              GeoLite2 database path (optional)
+              <input id="set-geolite" type="text" placeholder="C:\\path\\to\\GeoLite2-City.mmdb" />
+            </label>
+            <label class="opt">
+              <input id="set-http-geoip" type="checkbox" checked />
+              Allow HTTP GeoIP fallback (ip-api.com)
+            </label>
+          </div>
+        </details>
+
         <div class="progress" id="progress-wrap" hidden>
           <div class="progress__bar" id="progress-bar"></div>
         </div>

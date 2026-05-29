@@ -74,6 +74,71 @@ function $<T extends HTMLElement>(id: string): T {
   return el as T;
 }
 
+/** Persisted user settings (mirrors the optional fields of Rust `ScanRequest`). */
+interface Settings {
+  judge_url: string;
+  concurrency: number;
+  connect_timeout_secs: number;
+  request_timeout_secs: number;
+  geolite_path: string;
+  allow_http_geoip: boolean;
+}
+
+const SETTINGS_KEY = "proxyscope.settings";
+
+const SETTINGS_FIELDS: Array<{
+  id: string;
+  key: keyof Settings;
+  kind: "text" | "number" | "checkbox";
+}> = [
+  { id: "set-judge", key: "judge_url", kind: "text" },
+  { id: "set-concurrency", key: "concurrency", kind: "number" },
+  { id: "set-connect", key: "connect_timeout_secs", kind: "number" },
+  { id: "set-request", key: "request_timeout_secs", kind: "number" },
+  { id: "set-geolite", key: "geolite_path", kind: "text" },
+  { id: "set-http-geoip", key: "allow_http_geoip", kind: "checkbox" },
+];
+
+function readSettings(): Settings {
+  const settings = {} as Settings;
+  for (const field of SETTINGS_FIELDS) {
+    const el = $<HTMLInputElement>(field.id);
+    if (field.kind === "checkbox") {
+      (settings[field.key] as boolean) = el.checked;
+    } else if (field.kind === "number") {
+      (settings[field.key] as number) = Number(el.value);
+    } else {
+      (settings[field.key] as string) = el.value.trim();
+    }
+  }
+  return settings;
+}
+
+function loadSettings(): void {
+  let stored: Partial<Settings> = {};
+  try {
+    stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}");
+  } catch {
+    stored = {};
+  }
+  for (const field of SETTINGS_FIELDS) {
+    const el = $<HTMLInputElement>(field.id);
+    const value = stored[field.key];
+    if (value != null) {
+      if (field.kind === "checkbox") {
+        el.checked = Boolean(value);
+      } else {
+        el.value = String(value);
+      }
+    }
+    el.addEventListener("change", saveSettings);
+  }
+}
+
+function saveSettings(): void {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(readSettings()));
+}
+
 /** Escapes text for safe insertion into innerHTML. */
 function esc(value: string): string {
   return value
@@ -204,7 +269,9 @@ async function startScan(): Promise<void> {
   const options = {
     check_rotation: $<HTMLInputElement>("rotation").checked,
     rotation_samples: Number($<HTMLInputElement>("samples").value) || 4,
+    ...readSettings(),
   };
+  saveSettings();
 
   try {
     const total = await invoke<number>("start_scan", { text, options });
@@ -341,6 +408,7 @@ function wireControls(): void {
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+  loadSettings();
   renderHead();
   wireControls();
   render();
